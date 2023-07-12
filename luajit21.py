@@ -86,6 +86,8 @@ CFRAME_RAWMASK = ~(CFRAME_RESUME|CFRAME_UNWIND_FF)
 CFRAME_OFS_L = 416
 CFRAME_OFS_PC = 7*4  # for x86_64 (non-windows)
 
+LJ_GCVMASK  = 0x7fffffffffff
+LJ_FR2     =     1
 cfunc_cache = {}
 
 LJ_VMST_INTERP = 0
@@ -130,8 +132,15 @@ def get_cur_L():
         return mL
     return gcref(G(mL)['cur_L'])['th'].address
 
+# def gcval(o):
+#     return gcref(o['gcr'])
+#define gcrefu(r)   ((r).gcptr64)
+# #define gcval(o)    ((GCobj *)(gcrefu((o)->gcr) & LJ_GCVMASK))
+def gcrefu(r):
+    return r['gcptr64']
+    
 def gcval(o):
-    return gcref(o['gcr'])
+    return (gcrefu(o['gcr']) & LJ_GCVMASK).cast(typ("GCobj *"))
 
 def tabV(o):
     return gcval(o)['tab'].address
@@ -145,8 +154,11 @@ def cframe_L(cf):
     return gcref((cf.cast(typ("char*")) + CFRAME_OFS_L) \
             .cast(typ("GCRef*")).dereference())['th'].address
 
-def frame_ftsz(tv):
-    return tv['fr']['tp']['ftsz']
+# def frame_ftsz(tv):
+#     return tv['fr']['tp']['ftsz']
+# #define frame_ftsz(f)       ((ptrdiff_t)(f)->ftsz)
+def frame_ftsz(f):
+    return f['ftsz']
 
 def frame_type(f):
     return (frame_ftsz(f) & FRAME_TYPE)
@@ -167,23 +179,29 @@ def sizeof(typ):
     return gdb.parse_and_eval("sizeof(" + typ + ")")
 
 def gcref(r):
-    return r['gcptr32'].cast(typ("uintptr_t")).cast(typ("GCobj*"))
+    return r['gcptr64'].cast(typ("GCobj*"))
 
 def gcrefp(r, t):
     #((t *)(void *)(uintptr_t)(r).gcptr32)
-    return r['gcptr32'].cast(typ(t + "*"))
+    return r['gcptr64'].cast(typ(t + "*"))
 
+# def frame_gc(frame):
+#     return gcref(frame['fr']['func'])
+#(gcval((f)-1))
 def frame_gc(frame):
-    return gcref(frame['fr']['func'])
+    return gcval((frame)-1)
 
 def obj2gco(v):
     return v.cast(typ("GCobj*"))
 
 def mref(r, t):
-    return r['ptr32'].cast(typ("uintptr_t")).cast(typ(t + "*"))
+    return r['ptr64'].cast(typ("uintptr_t")).cast(typ(t + "*"))
 
+# def frame_pc(f):
+#     return mref(f['fr']['tp']['pcr'], "BCIns")
+# #define frame_pc(f)     ((const BCIns *)frame_ftsz(f))
 def frame_pc(f):
-    return mref(f['fr']['tp']['pcr'], "BCIns")
+    return frame_ftsz(f).cast(typ("BCIns *"))
 
 def frame_contpc(f):
     return frame_pc(f - 1)
@@ -192,7 +210,7 @@ def bc_a(i):
     return newval("BCReg", (i >> 8) & 0xff)
 
 def frame_prevl(f):
-    return f - (1 + bc_a(frame_pc(f)[-1]))
+    return f - (1 + LJ_FR2 + bc_a(frame_pc(f)[-1]))
 
 def frame_sized(f):
     return (frame_ftsz(f) & ~FRAME_TYPEP)
@@ -415,7 +433,7 @@ def lj_debug_dumpstack(L, T, depth, base, full):
         level = ~depth
         depth = dir = -1
 
-    bot = tvref(L['stack'])
+    bot = tvref(L['stack']) + LJ_FR2
     while level != depth:
         #print "checking level: %d" % level
 
@@ -425,7 +443,10 @@ def lj_debug_dumpstack(L, T, depth, base, full):
         if frame:
             nextframe = (frame + size) if size else null()
             fn = frame_func(frame)
-            #print "type(fn) == %s" % fn.type
+            # print("type(fn) == %s" % fn.type)
+            # print("frame == %s" % frame)
+            # print("frame2 == %s" % (frame - 1))            
+            # print("fn == %s" % fn)                        
             if not fn:
                 return
 
@@ -2520,7 +2541,7 @@ Usage: lgcstat"""
 
         # step 3: Figure out the size of misc data structures
         strhash_size = (g['strmask'] + 1) * typ("GCRef").sizeof
-        g_tmpbuf_sz = g['tmpbuf']['e']['ptr32'] - g['tmpbuf']['b']['ptr32']
+        g_tmpbuf_sz = g['tmpbuf']['e']['ptr64'] - g['tmpbuf']['b']['ptr64']
         jit_state_sz = self.get_jit_state_sz(G2J(g))
         ctype_state_sz = 0
         cts = ctype_ctsG(g)
