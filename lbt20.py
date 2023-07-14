@@ -214,7 +214,7 @@ Usage: lbt lua_State"""
             L = gdb.parse_and_eval(argv[0])
 
         if not L:
-            print "L empty"
+            print ("L empty")
             return
 
         stack = ""
@@ -245,9 +245,9 @@ Usage: lbt lua_State"""
             stack += frame + "\n"
 
         if stack != "":
-            print stack
+            print (stack)
             return
 
-        print "empty backtrace"
+        print ("empty backtrace")
         return
 lbt()
