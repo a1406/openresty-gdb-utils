@@ -1,0 +1,37 @@
+Linux下gameserver使用jeprof工具排查内存泄漏
+1： jeprof介绍
+运行时的内存泄漏问题在很多场景下都相当难以排查，因为这类问题通常难以预测，也很难通过静态代码梳理的方式定位。
+
+jeprof 就是帮助我们解决此类问题的。
+jeprof是jemalloc提供的一个内存优化的工具，jemalloc是facebook开源的内存管理工具，类似ptmalloc和tcmalloc，在多线程场景具有较好的性能。
+默认情况下编译jemalloc后并没有jeprof工具，需要在编译时添加–enable-prof参数，然后在编译目录的bin目录中就能找到jeprof程序。
+开启prof功能的jemalloc根据环境变量MALLOC_CONF和mallctl接口操作prof功能。
+最终生成的结果如下：
+暂时无法在飞书文档外展示此内容
+
+2：在gameserver上使用的操作步骤
+a: jemalloc默认的编译是没有包含–enable-prof ，在jemalloc官网下载jemalloc的代码并编译。也可以使用我已经编译好的，在开发机224上，目录是/home/jack/jemalloc
+
+b: 修改LinuxGameApp.cpp的check_param_handler函数，这个函数对应的是SIGUSR1信号，添加如下代码，目的是在给进程发送SIGUSR1信号的时候，生成内存快照用于对比。如下
+ 171 #include "jemalloc/jemalloc.h"
+ 172 void check_param_handler(int sig)
+ 173 {
+ 174     printf("==== check_param_handler get SIGUSR1\n");
+ 175     bool active = true;
+ 176     mallctl("opt.prof_active", NULL, NULL, &active, sizeof(bool));
+ 177     active = true;
+ 178     mallctl("prof.active", NULL, NULL, &active, sizeof(bool));
+ 179     mallctl("prof.dump", NULL, NULL, NULL, 0);
+ 180
+
+c: gameserver启动的时候，设置环境变量MALLOC_CONF和LD_PRELOAD，注意这里设置的LD_PRELOAD要指向我们新编译出来的jemalloc库， 如下：
+export LD_PRELOAD=/data/rent_server/ver1.4/bin/libjemalloc.so; 
+export MALLOC_CONF=prof:true,prof_active:false,prof_prefix:/data/rent_server/ver1.4/bin/proflog/jeprof.out
+
+d: 观察gameserver进程，在需要的时候发送SIGUSR1信号给对应进程，进程会自动在prof_prefix下生成快照文件，并且序号自动递增
+
+e: 使用jeprof对两个快照文件进行分析，生成对应的dot文件, 命令如下
+./jeprof --dot ./iworldpcserver --base=proflog/jeprof.out.932.0.m0.heap proflog/jeprof.out.932.3.m3.heap > 1.dot
+
+f: 使用工具把dot文件转成其他格式的图片文件，比如用dot命令生成svg文件，命令如下：
+dot -Tsvg 1.dot -o 1.svg
